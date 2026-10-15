@@ -3,57 +3,46 @@
   if (window.__xHistoryLoaded) return;
   window.__xHistoryLoaded = true;
 
-  const ID = '[A-Za-z0-9_-]+';
-  // Tile links: /p/ID/, /reel/ID/, /reels/ID/ and the /username/reel/ID/ form used on profiles.
-  const LINK_RE = new RegExp(`^(?:/[^/]+)?/(p|reel|reels)/(${ID})/?$`);
-  // A post opened in a modal over a grid. The source underneath stays the live one.
-  const MODAL_RE = new RegExp(`^(?:/[^/]+)?/(?:p|reel)/${ID}/?$`);
-  // The Reels feed has no reel links in the DOM. The only trace of the reel
-  // on screen is the address bar, which Instagram rewrites as you scroll.
-  const REELS_FEED_RE = new RegExp(`^/reels/(${ID})/?$`);
-  const LINK_SELECTOR = 'a[href*="/p/"], a[href*="/reel/"], a[href*="/reels/"]';
-  // Grid tiles always link to /p/ID/, so a reel is identified by its "Clip"
-  // badge. The path prefix is a fallback for non-English UIs.
-  const CLIP_LABEL = 'Clip';
-  const CLIP_PATH_PREFIX = 'M22.942 7.464';
-  // A profile's Reels tab. Its tiles link to /username/reel/ID/, so tiles left
-  // over from the previous profile can be told apart while the page swaps.
-  const PROFILE_REELS_RE = /^\/([A-Za-z0-9._]+)\/reels\/?$/;
-  const NOT_PROFILES = new Set(['explore', 'accounts', 'direct', 'stories', 'your_activity']);
+  // Every post on Home, Bookmarks, Likes and a profile's Media tab is one of
+  // these (seen 15 Oct 2026). Its own link is the <a> around its <time>.
+  const ARTICLE_SELECTOR = 'article[data-testid="tweet"]';
+  const STATUS_PATH_RE = /^\/([A-Za-z0-9_]{1,15})\/status\/(\d{5,25})\/?$/;
+  // A video post has X's player component. GIFs use the same player.
+  const VIDEO_SELECTOR = '[data-testid="videoComponent"], video';
+  // A quoted post is a clickable card inside the quoting article, with its own
+  // <time> that is not a link. Its id is only in React, which this isolated
+  // script cannot see, so content/download.js tags the card with data-xt-post="user/id".
+  const QUOTE_SELECTOR = 'div[role="link"]';
+  const POST_TAG_RE = /^([A-Za-z0-9_]{1,15})\/(\d{5,25})$/;
+  // A profile's Media tab (shown as "Videos"). X usernames ignore case.
+  const PROFILE_MEDIA_RE = /^\/([A-Za-z0-9_]{1,15})\/media\/?$/;
+  const NOT_PROFILES = new Set(['i', 'home', 'explore', 'notifications', 'messages', 'settings', 'search', 'compose', 'jobs', 'communities', 'premium', 'lists', 'bookmarks', 'grok']);
 
-  // The Likes page (Your activity) is built with Bloks: tiles are plain buttons
-  // with no link. The media id is only present in the thumbnail's cache key.
-  const LIKE_TILE_SELECTOR = 'div[role="button"][aria-label] img[src*="ig_cache_key"]';
-  const LIKE_VIDEO_RE = /^Video\b/; // aria-label starts "Video", "Photo" or "Carousel" (English UI)
-  const SHORTCODE_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
-  const IG_EPOCH_MS = 1314220021721n; // media ids are snowflakes counted from this moment
-
-  // Each source has its own tab. collect() returns the shortcodes visible right now.
+  // Each source has its own tab. collect() returns the video posts visible right now as {id, user}.
   // scroller() returns the element Auto-scroll should drive (leave it out for no Auto-scroll).
   // timed marks a source whose log time is the watch time, so its rows show it.
-  // Pages that match no source are not logged.
+  // Pages that match no source, including status pages, are not logged.
   const SOURCES = [
-    { id: 'home', label: 'Home', test: (p) => p === '/', collect: reelsInView, timed: true },
-    { id: 'reels', label: 'Reels', test: (p) => /^\/reels(\/|$)/.test(p), collect: reelInAddressBar, timed: true },
-    { id: 'saved', label: 'Saved', test: (p) => /^\/[^/]+\/saved(\/|$)/.test(p), collect: reelTiles, scroller: pageScroller },
-    { id: 'likes', label: 'Likes', test: (p) => /^\/your_activity\/interactions\/likes(\/|$)/.test(p), collect: likedVideos, scroller: likesScroller },
-    // byUser: rows carry the profile they were logged on and the tab is sectioned by it, not by day.
-    { id: 'profiles', label: 'Profiles', test: (p) => !!profileOf(p), collect: profileReels, scroller: pageScroller, byUser: true },
+    { id: 'home', label: 'Home', test: (p) => p === '/home', collect: videoPostsInView, timed: true },
+    { id: 'bookmarks', label: 'Bookmarks', test: (p) => /^\/i\/history\/?$/.test(p), collect: videoPosts, scroller: pageScroller },
+    { id: 'likes', label: 'Likes', test: (p) => /^\/i\/history\/likes\/?$/.test(p), collect: videoPosts, scroller: pageScroller },
+    // byUser: the tab is sectioned by each post's author, not by day.
+    { id: 'profiles', label: 'Profiles', test: (p) => !!profileOf(p), collect: profileVideoPosts, scroller: pageScroller, byUser: true },
   ];
 
-  const STORE_PREFIX = 'igHistory.v2.'; // one key per source, value is [[shortcode, unixSeconds], ...]
-  const LEGACY_KEY = 'igHistory.v1';
-  const SETTINGS_KEY = 'igHistory.settings'; // {prefix}
-  const MIGRATED_KEY = 'igHistory.migrated'; // set once the page localStorage copy has been moved over
-  const WRITER_KEY = 'igHistory.writer'; // {tab, n}, which tab made the last write
+  const STORE_PREFIX = 'xHistory.v1.'; // one key per source, value is [[id, unixSeconds, user], ...]
+  const SETTINGS_KEY = 'xHistory.settings'; // {prefix}
+  const WRITER_KEY = 'xHistory.writer'; // {tab, n}, which tab made the last write
   const DAY_MS = 864e5;
   const FLASH_MS = 5000; // how long a newly logged link stays highlighted
+  const EXAMPLE_URL = 'https://x.com/user/status/1234567890123456789';
 
-  const logs = Object.fromEntries(SOURCES.map((s) => [s.id, new Map()])); // shortcode -> unix seconds first seen
+  const logs = Object.fromEntries(SOURCES.map((s) => [s.id, new Map()])); // status id -> unix seconds first seen
   const sectionState = new Map(); // "source:label" -> open?
-  const fresh = new Map(); // "source:shortcode" -> ms it was logged, for the highlight
-  const owners = new Map(); // shortcode -> username, for byUser sources
-  let profile = null; // username of the last profile Reels page, kept while a reel is open over it
+  const fresh = new Map(); // "source:id" -> ms it was logged, for the highlight
+  // Status id -> author, shared by every tab: the same post can be in Bookmarks and Likes.
+  const authors = new Map();
+  let profile = null; // username of the last profile Media page
   let live = null; // source being logged right now, null on pages that are not logged
   let view = null; // source tab shown in the panel
   let settingsOpen = false; // the Settings tab is shown instead of view
@@ -64,18 +53,17 @@
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const nowSec = () => Math.floor(Date.now() / 1000);
-  const urlOf = (code) => `https://www.instagram.com/reel/${code}/`;
+  // x.com/i/status/ID also works, for the rare entry with no author.
+  const urlOf = (id) => `https://x.com/${authors.get(id) || 'i'}/status/${id}`;
   // What the Copy buttons put on the clipboard. The list itself always shows the plain link.
-  const copyUrlOf = (code) => settings.prefix + urlOf(code);
-  const codeRe = new RegExp(`^${ID}$`);
+  const copyUrlOf = (id) => settings.prefix + urlOf(id);
+  const codeRe = /^\d{5,25}$/;
 
   // ---------- Storage ----------
 
-  // History lives in chrome.storage.local, which survives clearing Instagram's
-  // site data. Older versions kept it in the page's localStorage; that copy is
-  // merged in once and then removed.
+  // History lives in chrome.storage.local, which survives clearing x.com's site data.
 
-  // byUser entries have a third element, the username.
+  // Entries are [id, unixSeconds, user].
   function parse(data, users) {
     const out = new Map();
     if (!Array.isArray(data)) return out;
@@ -88,8 +76,7 @@
   }
 
   function entriesOf(id) {
-    const byUser = SOURCES.find((s) => s.id === id).byUser;
-    return [...logs[id]].map(([code, ts]) => (byUser ? [code, ts, owners.get(code) || ''] : [code, ts]));
+    return [...logs[id]].map(([code, ts]) => [code, ts, authors.get(code) || '']);
   }
 
   // Adds entries that are not logged yet and keeps the log in time order. Returns how many were new.
@@ -100,7 +87,7 @@
         logs[id].set(code, ts);
         added++;
       }
-      if (users.has(code) && !owners.has(code)) owners.set(code, users.get(code));
+      if (users.has(code) && !authors.has(code)) authors.set(code, users.get(code));
     }
     if (added) logs[id] = new Map([...logs[id]].sort((a, b) => a[1] - b[1]));
     return added;
@@ -131,32 +118,9 @@
   }
 
   async function load() {
-    const keys = [...SOURCES.map((s) => STORE_PREFIX + s.id), SETTINGS_KEY, MIGRATED_KEY];
-    const stored = await chrome.storage.local.get(keys);
-    for (const s of SOURCES) logs[s.id] = parse(stored[STORE_PREFIX + s.id], owners);
+    const stored = await chrome.storage.local.get([...SOURCES.map((s) => STORE_PREFIX + s.id), SETTINGS_KEY]);
+    for (const s of SOURCES) logs[s.id] = parse(stored[STORE_PREFIX + s.id], authors);
     readSettings(stored[SETTINGS_KEY]);
-    if (!stored[MIGRATED_KEY]) await migrate();
-  }
-
-  async function migrate() {
-    const pageKeys = [...SOURCES.map((s) => STORE_PREFIX + s.id), SETTINGS_KEY, LEGACY_KEY];
-    const read = (key) => { try { return JSON.parse(localStorage.getItem(key)); } catch { return null; } };
-    for (const s of SOURCES) {
-      const users = new Map();
-      merge(s.id, parse(read(STORE_PREFIX + s.id), users), users);
-    }
-    // v0.2 stored bare shortcodes with no time. Bring them in as logged now.
-    const legacy = read(LEGACY_KEY);
-    for (const s of SOURCES) {
-      const codes = legacy && Array.isArray(legacy[s.id]) ? legacy[s.id] : [];
-      merge(s.id, new Map(codes.filter((c) => typeof c === 'string' && codeRe.test(c)).map((c) => [c, nowSec()])), new Map());
-    }
-    if (!settings.prefix) readSettings(read(SETTINGS_KEY));
-    const items = { [SETTINGS_KEY]: settings, [MIGRATED_KEY]: true };
-    for (const s of SOURCES) items[STORE_PREFIX + s.id] = entriesOf(s.id);
-    await chrome.storage.local.set(items);
-    // Only once the copy is safely written. Leaving it would bring cleared links back on a reinstall.
-    try { for (const key of pageKeys) localStorage.removeItem(key); } catch { /* storage blocked */ }
   }
 
   // Another Instagram tab wrote to the history. Take its copy so the tabs stay in step.
@@ -173,7 +137,7 @@
         continue;
       }
       const id = key.startsWith(STORE_PREFIX) && key.slice(STORE_PREFIX.length);
-      if (id && logs[id]) logs[id] = parse(newValue, owners);
+      if (id && logs[id]) logs[id] = parse(newValue, authors);
     }
     render();
   });
@@ -230,122 +194,68 @@
 
   // ---------- Detection ----------
 
-  function isReel(a, type) {
-    if (type !== 'p') return true;
-    if (a.querySelector(`svg[aria-label="${CLIP_LABEL}"]`)) return true;
-    for (const p of a.querySelectorAll('svg path')) {
-      if ((p.getAttribute('d') || '').startsWith(CLIP_PATH_PREFIX)) return true;
+  // A quoted post's <time> is not inside a link, so this finds the outer post only.
+  function ownPost(article) {
+    for (const time of article.querySelectorAll('time')) {
+      const a = time.closest('a');
+      const m = a && article.contains(a) && STATUS_PATH_RE.exec(a.pathname);
+      if (m) return { user: m[1], id: m[2] };
     }
-    return false;
+    return null;
   }
 
-  function reelTiles() {
-    const codes = [];
-    for (const a of document.querySelectorAll(LINK_SELECTOR)) {
-      const m = LINK_RE.exec(a.pathname);
-      if (m && isReel(a, m[1])) codes.push(m[2]);
+  // An article can hold two video posts: its own and the one it quotes. A
+  // quote inside a quote is not logged. An untagged card is picked up on a
+  // later tick, once content/download.js has tagged it.
+  function videoPostsIn(article) {
+    const cards = [...article.querySelectorAll(QUOTE_SELECTOR)].filter((c) => c.querySelector('time'));
+    const top = cards.filter((c) => !cards.some((o) => o !== c && o.contains(c)));
+    const videos = [...article.querySelectorAll(VIDEO_SELECTOR)];
+    const posts = [];
+    const own = ownPost(article);
+    if (own && videos.some((v) => !cards.some((c) => c.contains(v)))) posts.push(own);
+    for (const card of top) {
+      const m = POST_TAG_RE.exec(card.dataset.xtPost || '');
+      const inner = cards.filter((c) => c !== card && card.contains(c));
+      if (m && videos.some((v) => card.contains(v) && !inner.some((c) => c.contains(v)))) posts.push({ user: m[1], id: m[2] });
     }
-    return codes;
+    return posts;
+  }
+
+  const articles = () => [...document.querySelectorAll(ARTICLE_SELECTOR)];
+
+  function videoPosts() {
+    return articles().flatMap(videoPostsIn);
+  }
+
+  // X preloads posts below the fold, so only the one crossing the middle of the screen counts as seen.
+  function videoPostsInView() {
+    const middle = window.innerHeight / 2;
+    return articles().filter((a) => {
+      const box = a.getBoundingClientRect();
+      return box.top <= middle && box.bottom >= middle;
+    }).flatMap(videoPostsIn);
   }
 
   function profileOf(path) {
-    const m = PROFILE_REELS_RE.exec(path);
-    return m && !NOT_PROFILES.has(m[1]) ? m[1] : null;
+    const m = PROFILE_MEDIA_RE.exec(path);
+    return m && !NOT_PROFILES.has(m[1].toLowerCase()) ? m[1] : null;
   }
 
-  function profileReels() {
-    const codes = [];
-    for (const a of document.querySelectorAll(LINK_SELECTOR)) {
-      const m = /^\/([^/]+)\/reel\/([A-Za-z0-9_-]+)\/?$/.exec(a.pathname);
-      if (m && m[1] === profile) codes.push(m[2]);
-    }
-    return codes;
-  }
+  const sameUser = (a, b) => !!a && !!b && a.toLowerCase() === b.toLowerCase();
 
-  // Home feed: every post is an <article> and the reels among them carry a
-  // /reels/ID/ link. Posts are preloaded well below the fold, so only the one
-  // crossing the middle of the screen counts as seen.
-  function reelsInView() {
-    const middle = window.innerHeight / 2;
-    const codes = [];
-    for (const article of document.querySelectorAll('article')) {
-      const box = article.getBoundingClientRect();
-      if (box.top > middle || box.bottom < middle) continue;
-      for (const a of article.querySelectorAll('a[href*="/reels/"]')) {
-        const m = REELS_FEED_RE.exec(a.pathname);
-        if (m) { codes.push(m[1]); break; }
-      }
-    }
-    return codes;
-  }
-
-  function reelInAddressBar() {
-    const m = REELS_FEED_RE.exec(location.pathname);
-    return m ? [m[1]] : [];
-  }
-
-  const idDate = (id) => Number((id >> 23n) + IG_EPOCH_MS);
-
-  function shortcodeOf(id) {
-    let code = '';
-    for (let n = id; n > 0n; n /= 64n) code = SHORTCODE_ALPHABET[Number(n % 64n)] + code;
-    return code;
-  }
-
-  // The cache key is base64 of the media id, sometimes with a second id glued
-  // on the end. Media ids are 19 digits now and were shorter before 2015, so
-  // try each length and keep the one whose built-in date matches the tile's
-  // "shared <date>" label. Without a readable label, take the first id that
-  // is not dated in the future.
-  function mediaIdOf(img, label) {
-    let digits;
-    try {
-      digits = atob((new URL(img.src).searchParams.get('ig_cache_key') || '').split('.')[0]);
-    } catch { return null; }
-    if (!/^\d{15,}$/.test(digits)) return null;
-    const shared = Date.parse((label.match(/shared (.+)$/) || [])[1]);
-    let fallback = null;
-    for (const length of digits.length <= 19 ? [digits.length] : [19, 18, 17]) {
-      const id = BigInt(digits.slice(0, length));
-      const date = idDate(id);
-      if (date > Date.now() + DAY_MS) continue;
-      if (Math.abs(date - shared) < 2 * DAY_MS) return id;
-      fallback = fallback ?? id;
-    }
-    return fallback;
-  }
-
-  const likeCache = new Map(); // thumbnail src -> shortcode, or null for photos and carousels
-  function likedVideos() {
-    const codes = [];
-    for (const img of document.querySelectorAll(LIKE_TILE_SELECTOR)) {
-      if (!likeCache.has(img.src)) {
-        const label = img.closest('[role="button"]').getAttribute('aria-label') || '';
-        const id = LIKE_VIDEO_RE.test(label) ? mediaIdOf(img, label) : null;
-        likeCache.set(img.src, id ? shortcodeOf(id) : null);
-      }
-      const code = likeCache.get(img.src);
-      if (code) codes.push(code);
-    }
-    return codes;
+  // Posts left over from the previous profile stay in the DOM for a moment
+  // while X swaps pages, so only that user's own posts count.
+  function profileVideoPosts() {
+    return articles().filter((a) => sameUser((ownPost(a) || {}).user, profile)).flatMap(videoPostsIn);
   }
 
   function pageScroller() {
     return document.scrollingElement || document.documentElement;
   }
 
-  // The Likes grid scrolls inside its own container, not the page.
-  function likesScroller() {
-    for (let node = document.querySelector(LIKE_TILE_SELECTOR); node && node !== document.body; node = node.parentElement) {
-      if (node.scrollHeight > node.clientHeight + 50 && /(auto|scroll)/.test(getComputedStyle(node).overflowY)) return node;
-    }
-    return pageScroller();
-  }
-
   function resolveSource() {
-    const path = location.pathname;
-    if (MODAL_RE.test(path)) return live;
-    return SOURCES.find((s) => s.test(path));
+    return SOURCES.find((s) => s.test(location.pathname)) || null;
   }
 
   function tick() {
@@ -366,11 +276,11 @@
     if (live && ready) {
       const log = logs[live.id];
       const before = log.size;
-      for (const code of live.collect()) {
-        if (log.has(code)) continue;
-        log.set(code, nowSec());
-        if (live.byUser) owners.set(code, profile);
-        fresh.set(`${live.id}:${code}`, Date.now());
+      for (const { id, user } of live.collect()) {
+        if (!authors.has(id)) authors.set(id, user);
+        if (log.has(id)) continue;
+        log.set(id, nowSec());
+        fresh.set(`${live.id}:${id}`, Date.now());
       }
       if (log.size !== before) {
         save(live.id);
@@ -393,17 +303,17 @@
     return new Date(dayMs).toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
   }
 
-  // One section per profile. The profile open right now goes on top, then the
-  // rest by when they were last logged from. Newest first inside each.
+  // One section per author. The profile open right now goes on top, then the
+  // rest by when they were last logged. Newest first inside each.
   function groupsByUser(source) {
     const byUser = new Map();
     [...logs[source.id]].forEach(([code, ts], idx) => {
-      const user = owners.get(code) || '';
+      const user = authors.get(code) || '';
       if (!byUser.has(user)) byUser.set(user, { label: user ? `@${user}` : 'Unknown', items: [], latest: 0, current: false });
       const group = byUser.get(user);
       group.items.push({ code, ts, idx });
       group.latest = Math.max(group.latest, idx);
-      group.current = live === source && user === profile;
+      group.current = live === source && sameUser(user, profile);
     });
     const groups = [...byUser.values()];
     for (const g of groups) g.items.reverse();
@@ -529,7 +439,7 @@
   // Built once and only shown or hidden, so the field keeps focus while links are being logged.
   const prefixInput = el('input', { type: 'text', id: 'prefix', spellcheck: false, placeholder: 'Nothing' });
   const prefixExample = el('div', { className: 'example' });
-  const showExample = () => { prefixExample.textContent = `Copies as: ${copyUrlOf('SHORTCODE')}`; };
+  const showExample = () => { prefixExample.textContent = `Copies as: ${settings.prefix}${EXAMPLE_URL}`; };
   prefixInput.addEventListener('input', () => {
     settings.prefix = prefixInput.value;
     saveSettings();
@@ -721,7 +631,6 @@
       return;
     }
     disarmClear();
-    if (SOURCES.find((s) => s.id === view).byUser) for (const code of logs[view].keys()) owners.delete(code);
     logs[view] = new Map();
     save(view);
     render();
