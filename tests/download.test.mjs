@@ -151,3 +151,19 @@ test('photo post quoting a photo: each file is named after its own post', async 
     await close();
   }
 });
+
+test('a quote card whose post can no longer be read loses its tag', async () => {
+  const html = doc(post({ user: 'carol', id: '30011', quote: { user: 'dave', id: '30012', video: true } }));
+  const { page, close } = await launch({ '/home': html });
+  try {
+    await page.goto('https://x.com/home');
+    await fakeFibers(page);
+    const card = page.locator('div[role="link"]');
+    await until(() => card.getAttribute('data-xt-post'), (v) => v === 'dave/30012');
+    assert.equal(await card.getAttribute('data-xt-for'), '30011');
+    await page.evaluate(() => { delete document.querySelector('div[role="link"]').__reactFiber$test; });
+    assert.equal(await until(() => card.getAttribute('data-xt-post'), (v) => v === null), null);
+  } finally {
+    await close();
+  }
+});

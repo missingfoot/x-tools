@@ -178,3 +178,18 @@ test('export writes an X Tools backup and import merges it back', async () => {
     await close();
   }
 });
+
+test('a quote tag left from another post is not logged', async () => {
+  // Tagged for a different outer post, and no React props, so download.js cannot re-tag it.
+  const html = doc(post({ user: 'zoe', id: '61001', quote: { user: 'old', id: '61002', video: true } }))
+    .replace('data-fake-tweet="old/61002"', 'data-xt-post="old/61002" data-xt-for="99999"');
+  const { page, close } = await launch({ '/i/history': html });
+  try {
+    await page.goto('https://x.com/i/history');
+    await page.locator('#x-history .fab').waitFor();
+    await page.waitForTimeout(1200);
+    assert.deepEqual(await loggedLinks(page, 'Bookmarks'), []);
+  } finally {
+    await close();
+  }
+});

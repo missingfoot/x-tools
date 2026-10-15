@@ -29,7 +29,7 @@ The two scripts share one thing through the DOM: download.js tags each quoted po
 | Entry format | `[statusId, unixSeconds, user]` |
 | History DOM host | `#x-history` (shadow root), fixed at `right: 84px; bottom: 20px` to stay left of X's Grok and Chat buttons |
 | Download button class | `xdl-btn` |
-| Quote tag | `data-xt-post="user/id"` on quoted cards |
+| Quote tag | `data-xt-post="user/id"` and `data-xt-for="<quoting post id>"` on quoted cards; a tag whose `data-xt-for` does not match the article is ignored |
 | Load guards | `window.__xHistoryLoaded`, `window.__xDownloadLoaded` |
 | Backup | `{app: "x-tools", format: 1, exported, settings, history}` in `x-tools-history-YYYY-MM-DD.json` |
 

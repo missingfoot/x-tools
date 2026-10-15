@@ -162,16 +162,29 @@
   }
 
   // Re-read on every scan: X recycles timeline cells, so a card can change post.
+  // data-xt-for records the quoting post, so a tag left over from another
+  // post is never trusted, even before this scan gets to it.
   function tagQuotes() {
     for (const article of document.querySelectorAll(ARTICLE_SELECTOR)) {
       const own = ownPostOf(article);
       for (const card of article.querySelectorAll(QUOTE_SELECTOR)) {
         if (!card.querySelector('time')) continue;
         const tag = quotedTweetOf(card);
-        if (!tag || (own && tag === `${own.user}/${own.id}`)) continue;
+        if (!tag || !own || tag === `${own.user}/${own.id}`) {
+          delete card.dataset.xtPost;
+          delete card.dataset.xtFor;
+          continue;
+        }
         if (card.dataset.xtPost !== tag) card.dataset.xtPost = tag;
+        if (card.dataset.xtFor !== own.id) card.dataset.xtFor = own.id;
       }
     }
+  }
+
+  function quoteTagOf(card) {
+    const article = card.closest(ARTICLE_SELECTOR);
+    const own = article && ownPostOf(article);
+    return own && card.dataset.xtFor === own.id ? POST_TAG_RE.exec(card.dataset.xtPost || '') : null;
   }
 
   // ---------- File name ----------
@@ -201,7 +214,7 @@
   function postOf(media) {
     const root = ownerRoot(media);
     if (root && root.matches(QUOTE_SELECTOR)) {
-      const m = POST_TAG_RE.exec(root.dataset.xtPost || '');
+      const m = quoteTagOf(root);
       return m ? { user: m[1], id: m[2], root } : null;
     }
     const own = root && ownPostOf(root);

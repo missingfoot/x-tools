@@ -11,7 +11,8 @@
   const VIDEO_SELECTOR = '[data-testid="videoComponent"], video';
   // A quoted post is a clickable card inside the quoting article, with its own
   // <time> that is not a link. Its id is only in React, which this isolated
-  // script cannot see, so content/download.js tags the card with data-xt-post="user/id".
+  // script cannot see, so content/download.js tags the card with data-xt-post="user/id"
+  // and data-xt-for="<quoting post id>". A tag for another post is left over from a recycled cell.
   const QUOTE_SELECTOR = 'div[role="link"]';
   const POST_TAG_RE = /^([A-Za-z0-9_]{1,15})\/(\d{5,25})$/;
   // A profile's Media tab (shown as "Videos"). X usernames ignore case.
@@ -214,7 +215,7 @@
     const own = ownPost(article);
     if (own && videos.some((v) => !cards.some((c) => c.contains(v)))) posts.push(own);
     for (const card of top) {
-      const m = POST_TAG_RE.exec(card.dataset.xtPost || '');
+      const m = own && card.dataset.xtFor === own.id && POST_TAG_RE.exec(card.dataset.xtPost || '');
       const inner = cards.filter((c) => c !== card && card.contains(c));
       if (m && videos.some((v) => card.contains(v) && !inner.some((c) => c.contains(v)))) posts.push({ user: m[1], id: m[2] });
     }
