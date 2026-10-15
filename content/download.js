@@ -3,8 +3,10 @@
 // on x.com. Runs in the page's own world, because the video files are only
 // listed in X's React objects.
 //
-// Images are saved at their original size. Files are named after the post
-// that owns the media: user_id[_n].ext.
+// Images are saved at their original size. Videos and GIFs are saved as the
+// highest bitrate MP4 X lists for them. Quoted posts are tagged with their own
+// user and id (data-xt-post) so files are named after the post that owns the
+// media, and so content/history.js can log quoted videos.
 
 (function () {
   'use strict';
@@ -20,7 +22,13 @@
   // Post photos. Video posters also sit inside tweetPhoto but load from
   // amplify_video_thumb or ext_tw_video_thumb, not /media/, so they do not match.
   const IMAGE_SELECTOR = '[data-testid="tweetPhoto"] img[src^="https://pbs.twimg.com/media/"]';
-  const MEDIA_SELECTOR = IMAGE_SELECTOR;
+  // X's player. The <video> inside plays a blob: stream.
+  const VIDEO_SELECTOR = '[data-testid="videoComponent"] video';
+  const MEDIA_SELECTOR = `${IMAGE_SELECTOR}, ${VIDEO_SELECTOR}`;
+  // A quoted post is a clickable card inside the quoting article. It has its
+  // own <time>, which is not a link, and usually no link to the post at all.
+  const QUOTE_SELECTOR = 'div[role="link"]';
+  const POST_TAG_RE = /^([A-Za-z0-9_]{1,15})\/(\d{5,25})$/; // data-xt-post, shared with content/history.js
   // A post's own link is the <a> around its <time>.
   const STATUS_PATH_RE = /^\/([A-Za-z0-9_]{1,15})\/status\/(\d{5,25})/;
   // Photos in a post with several are wrapped in /user/status/id/photo/N links.
@@ -86,6 +94,7 @@
   }
 
   function scan() {
+    tagQuotes();
     // Timeline cells are recycled as you scroll. Drop buttons whose media has gone.
     for (const btn of document.querySelectorAll(`.${BUTTON_CLASS}`)) {
       const media = mediaIn(btn.parentElement);
@@ -112,6 +121,59 @@
     return url.href;
   }
 
+  // React keeps its fiber on some elements only, so start from the nearest one that has it.
+  function fiberOf(node) {
+    for (; node && node !== document.body; node = node.parentElement) {
+      const key = Object.keys(node).find((k) => k.startsWith('__reactFiber$'));
+      if (key) return node[key];
+    }
+    return null;
+  }
+
+  // The player's props, about 30 levels up from the <video>, list the files X
+  // has for it: an HLS playlist and complete MP4s (picture and sound) with
+  // their bitrates. The highest bitrate MP4 is the best single file.
+  function videoSource(video) {
+    let fiber = fiberOf(video);
+    for (let depth = 0; fiber && depth < 80; depth++, fiber = fiber.return) {
+      const source = fiber.memoizedProps && fiber.memoizedProps.source;
+      if (!source || !Array.isArray(source.variants)) continue;
+      const mp4s = source.variants.filter((v) => v && v.content_type === 'video/mp4' && (v.src || v.url));
+      mp4s.sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0));
+      return mp4s.length ? mp4s[0].src || mp4s[0].url : null;
+    }
+    return null;
+  }
+
+  // ---------- Quoted posts ----------
+
+  // Walking up from a quote card, the first props with a tweet (about 12
+  // levels) are the quoted post. The quoting post's tweet is further up.
+  function quotedTweetOf(card) {
+    let fiber = fiberOf(card);
+    for (let depth = 0; fiber && depth < 30; depth++, fiber = fiber.return) {
+      const t = fiber.memoizedProps && fiber.memoizedProps.tweet;
+      if (t && typeof t.id_str === 'string' && t.user && typeof t.user.screen_name === 'string') {
+        const tag = `${t.user.screen_name}/${t.id_str}`;
+        return POST_TAG_RE.test(tag) ? tag : null;
+      }
+    }
+    return null;
+  }
+
+  // Re-read on every scan: X recycles timeline cells, so a card can change post.
+  function tagQuotes() {
+    for (const article of document.querySelectorAll(ARTICLE_SELECTOR)) {
+      const own = ownPostOf(article);
+      for (const card of article.querySelectorAll(QUOTE_SELECTOR)) {
+        if (!card.querySelector('time')) continue;
+        const tag = quotedTweetOf(card);
+        if (!tag || (own && tag === `${own.user}/${own.id}`)) continue;
+        if (card.dataset.xtPost !== tag) card.dataset.xtPost = tag;
+      }
+    }
+  }
+
   // ---------- File name ----------
 
   function ownPostOf(article) {
@@ -123,13 +185,25 @@
     return null;
   }
 
-  // The element whose post owns this media.
+  // The innermost quote card around the media, if any.
+  function quoteCardOf(media) {
+    for (let card = media.closest(QUOTE_SELECTOR); card; card = card.parentElement && card.parentElement.closest(QUOTE_SELECTOR)) {
+      if (card.querySelector('time') && card.closest(ARTICLE_SELECTOR)) return card;
+    }
+    return null;
+  }
+
+  // The element whose post owns this media: a quote card or the article.
   function ownerRoot(media) {
-    return media.closest(ARTICLE_SELECTOR);
+    return quoteCardOf(media) || media.closest(ARTICLE_SELECTOR);
   }
 
   function postOf(media) {
     const root = ownerRoot(media);
+    if (root && root.matches(QUOTE_SELECTOR)) {
+      const m = POST_TAG_RE.exec(root.dataset.xtPost || '');
+      return m ? { user: m[1], id: m[2], root } : null;
+    }
     const own = root && ownPostOf(root);
     if (own) return { ...own, root };
     // A status page shows the post in the address bar.
@@ -164,7 +238,8 @@
 
   // Returns the note for the button's tooltip.
   async function download(media) {
-    const url = imageSource(media);
+    const url = isVideo(media) ? videoSource(media) : imageSource(media);
+    if (!url) throw new Error('Could not find the video file on this page.');
     // The CDN is a different origin, so a plain download link would just open
     // the file. Fetch it and save the bytes from a blob instead.
     const response = await fetch(url);
