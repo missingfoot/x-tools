@@ -14,7 +14,7 @@ Background for continuing this project in Claude Code. User-facing setup is in `
 manifest.json           MV3, two content scripts on https://x.com/*
 content/history.js      History panel            (world: ISOLATED, chrome.storage.local)
 content/download.js     Download buttons         (world: MAIN, reads React fibers)
-icons/                  icon.svg (source, X blue) and 16/32/48/128 PNGs rendered with rsvg-convert
+icons/                  icon.svg (source, grey wrench and spanner) and 16/32/48/128 PNGs rendered with rsvg-convert
 tests/                  Playwright + node:test against mock x.com pages, run with npm test
 docs/superpowers/       spec and plan
 ```
