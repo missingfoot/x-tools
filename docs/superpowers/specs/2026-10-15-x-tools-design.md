@@ -89,8 +89,8 @@ A `scan()` every 500 ms removes buttons whose media has gone (X recycles timelin
 
 Qualifying media:
 
-- Image: an `img` on `pbs.twimg.com/media/` inside `[data-testid="tweetPhoto"]`, at least 200 px rendered, with no video in the same frame. Avatars, link cards and emoji do not match.
-- Video: a `video` inside `[data-testid="videoComponent"]`, at least 200 px rendered.
+- Image: an `img` on `pbs.twimg.com/media/` inside `[data-testid="tweetPhoto"]`, at least 100 px rendered (a four photo grid shows images about 145 px tall), with no video in the same frame. Avatars, link cards and emoji do not match.
+- Video: a `video` inside `[data-testid="videoComponent"]`, at least 100 px rendered (a four photo grid shows images about 145 px tall).
 
 Placement reuses Insta Tools' `frameFor()` approach (walk up same-sized wrappers, take the outermost positioned one) and the overlap check that moves the button down when X's own controls are under it. Constants are re-measured on the live page.
 
