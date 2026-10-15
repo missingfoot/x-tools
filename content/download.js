@@ -19,11 +19,14 @@
   const MIN_SIZE = 100;
   // Every post on a timeline, a status page, Bookmarks and Likes (seen 15 Oct 2026).
   const ARTICLE_SELECTOR = 'article[data-testid="tweet"]';
-  // Post photos. Video posters also sit inside tweetPhoto but load from
-  // amplify_video_thumb or ext_tw_video_thumb, not /media/, so they do not match.
+  // Post photos. Video previews also sit inside tweetPhoto. Most load from
+  // amplify_video_thumb or ext_tw_video_thumb, but some are /media/ images next
+  // to the player (NASA's Media tab), so isPoster() drops those.
   const IMAGE_SELECTOR = '[data-testid="tweetPhoto"] img[src^="https://pbs.twimg.com/media/"]';
-  // X's player. The <video> inside plays a blob: stream.
-  const VIDEO_SELECTOR = '[data-testid="videoComponent"] video';
+  // X's player. The <video> inside plays a blob: stream, and on Home its box
+  // is about 3 px bigger than the player around it (seen 15 Oct 2026).
+  const PLAYER_SELECTOR = '[data-testid="videoComponent"]';
+  const VIDEO_SELECTOR = `${PLAYER_SELECTOR} video`;
   const MEDIA_SELECTOR = `${IMAGE_SELECTOR}, ${VIDEO_SELECTOR}`;
   // A quoted post is a clickable card inside the quoting article. It has its
   // own <time>, which is not a link, and usually no link to the post at all.
@@ -41,10 +44,15 @@
   const ICONS = { idle: ARROW, busy: ARROW, done: CHECK, error: 'M6 6l12 12M18 6L6 18' };
 
   const isVideo = (media) => media.tagName === 'VIDEO';
+  const isPoster = (media) => {
+    const photo = !isVideo(media) && media.closest('[data-testid="tweetPhoto"]');
+    return !!photo && !!photo.querySelector(PLAYER_SELECTOR);
+  };
 
   // ---------- Finding media ----------
 
   function isPostMedia(media) {
+    if (isPoster(media)) return false;
     if (media.offsetWidth < MIN_SIZE || media.offsetHeight < MIN_SIZE) return false;
     return !!media.closest(ARTICLE_SELECTOR);
   }
@@ -54,9 +62,11 @@
   // button has to sit above all of them, so take the outermost positioned
   // wrapper that still matches the media's size.
   function frameFor(media) {
-    const box = media.getBoundingClientRect();
-    let frame = null;
-    let node = media.parentElement;
+    // Measure a video from X's player, not the <video>, which can overhang it by a few px.
+    const anchor = (isVideo(media) && media.closest(PLAYER_SELECTOR)) || media;
+    const box = anchor.getBoundingClientRect();
+    let frame = anchor !== media && getComputedStyle(anchor).position !== 'static' ? anchor : null;
+    let node = anchor.parentElement;
     for (let depth = 0; node && depth < 12; depth++, node = node.parentElement) {
       if (node.tagName === 'ARTICLE') break;
       const b = node.getBoundingClientRect();
@@ -226,7 +236,7 @@
 
   // 0 means no number: the post has only one media item.
   function indexOf(media, post) {
-    const all = [...post.root.querySelectorAll(MEDIA_SELECTOR)].filter((m) => ownerRoot(m) === post.root);
+    const all = [...post.root.querySelectorAll(MEDIA_SELECTOR)].filter((m) => ownerRoot(m) === post.root && !isPoster(m));
     if (all.length < 2) return 0;
     const link = media.closest('a');
     const photo = link && PHOTO_PATH_RE.exec(link.pathname);

@@ -167,3 +167,39 @@ test('a quote card whose post can no longer be read loses its tag', async () => 
     await close();
   }
 });
+
+test('video a few px larger than its player still gets a button', async () => {
+  // Seen on Home (15 Oct 2026): the <video> box is about 3 px bigger than the player around it.
+  const html = doc(post({ user: 'bob', id: '20011', video: true })
+    .replace('<video style="display:block;width:500px;height:280px"', '<video style="display:block;width:503px;height:283px"'));
+  const { page, close } = await launch({ '/home': html });
+  try {
+    await page.goto('https://x.com/home');
+    await fakeFibers(page);
+    const btn = page.locator('.xdl-btn');
+    await btn.waitFor({ timeout: 5000 });
+    assert.equal(await clickAndSave(page, btn), 'bob_20011.mp4');
+  } finally {
+    await close();
+  }
+});
+
+test('a video preview image on /media/ gets no button of its own', async () => {
+  // Seen on NASA's Media tab: the poster is a /media/ image in the same tweetPhoto as the player.
+  const poster = '<div data-testid="tweetPhoto" style="position:relative;width:500px;height:280px">'
+    + '<img src="https://pbs.twimg.com/media/V20012?format=jpg&amp;name=small" style="position:absolute;inset:0;width:100%;height:100%;opacity:0">';
+  const html = doc(post({ user: 'bob', id: '20012', video: true })
+    .replace('<div data-testid="videoComponent"', poster + '<div data-testid="videoComponent"')
+    .replace('</video></div>', '</video></div></div>'));
+  const { page, close } = await launch({ '/home': html });
+  try {
+    await page.goto('https://x.com/home');
+    await fakeFibers(page);
+    await page.locator('.xdl-btn').first().waitFor({ timeout: 5000 });
+    await page.waitForTimeout(700);
+    assert.equal(await page.locator('.xdl-btn').count(), 1);
+    assert.equal(await clickAndSave(page, page.locator('.xdl-btn')), 'bob_20012.mp4');
+  } finally {
+    await close();
+  }
+});
