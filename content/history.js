@@ -123,10 +123,9 @@
     readSettings(stored[SETTINGS_KEY]);
   }
 
-  // Another Instagram tab wrote to the history. Take its copy so the tabs stay in step.
+  // Another x.com tab wrote to the history. Take its copy so the tabs stay in step.
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== 'local' || !ready) return;
-    // Other parts of the extension (the download problem list) share this storage.
     if (!Object.keys(changes).some((key) => key === SETTINGS_KEY || key.startsWith(STORE_PREFIX))) return;
     const writer = changes[WRITER_KEY] && changes[WRITER_KEY].newValue;
     if (writer && writer.tab === tabToken) return;
@@ -146,7 +145,7 @@
 
   function exportHistory() {
     const data = {
-      app: 'insta-tools',
+      app: 'x-tools',
       format: 1,
       exported: new Date().toISOString(),
       settings,
@@ -154,7 +153,7 @@
     };
     const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
     const day = new Date().toLocaleDateString('en-CA'); // YYYY-MM-DD
-    const a = el('a', { href: URL.createObjectURL(blob), download: `insta-tools-history-${day}.json` });
+    const a = el('a', { href: URL.createObjectURL(blob), download: `x-tools-history-${day}.json` });
     root.append(a);
     a.click();
     a.remove();
@@ -171,8 +170,8 @@
     }
     let data;
     try { data = JSON.parse(await file.text()); } catch { data = null; }
-    if (!data || data.app !== 'insta-tools' || typeof data.history !== 'object' || !data.history) {
-      backupNote.textContent = 'That file is not an Insta Tools backup.';
+    if (!data || data.app !== 'x-tools' || typeof data.history !== 'object' || !data.history) {
+      backupNote.textContent = 'That file is not an X Tools backup.';
       return;
     }
     let added = 0;
@@ -355,7 +354,8 @@
   };
 
   const host = el('div', { id: 'x-history' });
-  host.style.cssText = 'position:fixed;right:20px;bottom:84px;z-index:2147483647;';
+  // X stacks its Grok and Chat buttons in the bottom right corner. Sit to their left.
+  host.style.cssText = 'position:fixed;right:84px;bottom:20px;z-index:2147483647;';
   const root = host.attachShadow({ mode: 'open' });
 
   const sheet = new CSSStyleSheet();
@@ -418,7 +418,7 @@
   root.adoptedStyleSheets = [sheet];
 
   const badge = el('span', { className: 'badge', textContent: '0' });
-  const fab = el('button', { className: 'fab', title: 'Instagram History' }, ['History', badge]);
+  const fab = el('button', { className: 'fab', title: 'X History' }, ['History', badge]);
   const status = el('span', { className: 'status' });
   const list = el('div', { className: 'list' });
   const copyBtn = el('button', { className: 'primary', textContent: 'Copy all' });
@@ -468,7 +468,7 @@
   ]);
 
   const panel = el('div', { className: 'panel', hidden: true }, [
-    el('div', { className: 'head' }, [el('span', { className: 'title', textContent: 'Instagram History' }), status]),
+    el('div', { className: 'head' }, [el('span', { className: 'title', textContent: 'X History' }), status]),
     el('div', { className: 'tabs' }, [...[...tabs.values()].map((t) => t.btn), settingsTab]),
     list,
     settingsPane,
@@ -547,7 +547,7 @@
     // Total across every tab, now that the tabs no longer show their own counts.
     const total = SOURCES.reduce((n, s) => n + logs[s.id].size, 0);
     badge.textContent = String(total);
-    fab.title = `Instagram History: ${SOURCES.map((s) => `${s.label} ${logs[s.id].size}`).join(', ')}`;
+    fab.title = `X History: ${SOURCES.map((s) => `${s.label} ${logs[s.id].size}`).join(', ')}`;
     status.textContent = storageError || (!ready ? 'Loading' : live ? `Logging: ${live.label}` : 'Not logging on this page');
     // Auto-scroll only makes sense on a grid page, while looking at that page's tab.
     scrollBtn.hidden = !(live && live.scroller && view === live.id);
@@ -640,7 +640,7 @@
   copyBtn.addEventListener('click', copyAll);
   scrollBtn.addEventListener('click', autoScroll);
   clearBtn.addEventListener('click', clear);
-  // Keep Instagram's keyboard shortcuts from firing while the panel has focus.
+  // Keep X's keyboard shortcuts (j, k, l and others) from firing while the panel has focus.
   host.addEventListener('keydown', (e) => e.stopPropagation());
 
   // ---------- Start ----------

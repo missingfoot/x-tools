@@ -131,3 +131,50 @@ test('history survives a reload', async () => {
     await close();
   }
 });
+
+test('panel is titled X History and sits clear of the bottom right corner', async () => {
+  const { page, close } = await launch({ '/home': doc() });
+  try {
+    await page.goto('https://x.com/home');
+    await page.locator('#x-history .fab').click();
+    assert.equal(await page.locator('#x-history .title').textContent(), 'X History');
+    const style = await page.locator('#x-history').getAttribute('style');
+    assert.match(style, /right:\s*84px/);
+  } finally {
+    await close();
+  }
+});
+
+test('export writes an X Tools backup and import merges it back', async () => {
+  const { page, close } = await launch({ '/i/history': doc(post({ user: 'zed', id: '47001', video: true })), '/home': doc() });
+  try {
+    await page.goto('https://x.com/i/history');
+    await until(() => loggedLinks(page, 'Bookmarks'), (l) => l.length === 1);
+    await page.goto('https://x.com/home');
+    const host = page.locator('#x-history');
+    await host.locator('.fab').click(); // the panel starts closed on a fresh page
+    await host.locator('.tab', { hasText: /^Settings$/ }).click();
+    const [dl] = await Promise.all([page.waitForEvent('download'), host.locator('button', { hasText: /^Export$/ }).click()]);
+    assert.match(dl.suggestedFilename(), /^x-tools-history-\d{4}-\d{2}-\d{2}\.json$/);
+    const data = JSON.parse(await (await import('node:fs/promises')).readFile(await dl.path(), 'utf8'));
+    assert.equal(data.app, 'x-tools');
+    assert.equal(data.history.bookmarks[0][0], '47001');
+    assert.equal(data.history.bookmarks[0][2], 'zed');
+
+    // Clear Bookmarks, then import the file back.
+    await host.locator('.tab', { hasText: /^Bookmarks$/ }).click();
+    await host.locator('button', { hasText: /^Clear$/ }).click();
+    await host.locator('button', { hasText: /^Delete / }).click();
+    await host.locator('.tab', { hasText: /^Settings$/ }).click();
+    await host.locator('input[type="file"]').setInputFiles({ name: 'b.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(data)) });
+    assert.equal(await until(() => host.locator('.settings-pane .hint').last().textContent(), (t) => t.startsWith('Imported')), 'Imported 1 new links.');
+    assert.deepEqual(await loggedLinks(page, 'Bookmarks'), ['https://x.com/zed/status/47001']);
+
+    const insta = { app: 'insta-tools', format: 1, history: {} };
+    await host.locator('.tab', { hasText: /^Settings$/ }).click();
+    await host.locator('input[type="file"]').setInputFiles({ name: 'i.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(insta)) });
+    assert.equal(await until(() => host.locator('.settings-pane .hint').last().textContent(), (t) => t.startsWith('That file')), 'That file is not an X Tools backup.');
+  } finally {
+    await close();
+  }
+});
