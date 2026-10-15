@@ -29,6 +29,7 @@ Success: on the four pages below, video posts are logged into the right tab, and
 - Walking up the React fiber from the nearest ancestor that has a `__reactFiber$` key, about 30 levels up, `memoizedProps.source` has `{eventId, contentId, variants, videoId, downloadLink}`. `variants` holds one `application/x-mpegURL` entry and several `video/mp4` entries with `bitrate` (288000, 832000 and 2176000 seen, resolution in the path, up to 1280x720). Files are on `video.twimg.com`.
 - `fetch()` of the best MP4 from the page world returned 206 `video/mp4`.
 - Images are `pbs.twimg.com/media/...?format=jpg&name=small`. `name=orig` gives the original file.
+- Quoted posts sit inside the quoting article as a `div[role="link"]` card. The card has its own `<time>`, but it is not inside an `<a>`, and the card usually has no status link at all. The author is in the card's `[data-testid^="UserAvatar-Container-"]` test id. A quoted video has the same `videoComponent` and `source.variants` as any other video. Walking up the fiber from the card, the first `memoizedProps.tweet` with an `id_str` (about 12 levels) is the quoted post: `tweet.id_str` and `tweet.user.screen_name`. Higher up, `quotingTweet` and another `tweet` are the outer post. A quote can itself contain a `nestedQuotePreview`.
 - Claude in Chrome blocks tool output containing these CDN URLs and many paths. Return booleans, counts and lengths when inspecting.
 
 ## Architecture
@@ -39,7 +40,7 @@ x.com page
   content/download.js  (world: MAIN)      Download buttons, reads React fiber props
 ```
 
-The two scripts do not talk to each other. Download runs in the MAIN world because the video variants are only reachable through React fiber objects. It needs no `chrome.*` API, so there is no bridge, no service worker and no native host.
+The two scripts share one thing through the DOM: `download.js` tags every quoted post card it finds with `data-xt-post="<user>/<id>"` (read from fiber props), and `history.js` reads that attribute. That is how History, which cannot see React props from the isolated world, learns a quoted post's id. Otherwise they do not talk to each other. Download runs in the MAIN world because the video variants are only reachable through React fiber objects. It needs no `chrome.*` API, so there is no bridge, no service worker and no native host.
 
 Manifest: MV3, name "X Tools", version 1.0.0, permissions `storage` and `unlimitedStorage`, content scripts on `https://x.com/*`. No `key`, no popup, no background. The toolbar icon has no action. New icon (an X-themed variant of the Insta Tools icon).
 
@@ -58,14 +59,19 @@ Fixed identifiers:
 
 Same tick loop as Insta Tools: every 400 ms, find the source for the current path, collect the video post ids visible now, log new ones with the current time.
 
-A post qualifies when its article contains `[data-testid="videoComponent"]` or a `video` element. The id and author come from the time link. Quoted posts nested inside an article are ignored (only the outer article's own time link counts).
+Each article can yield up to two posts:
+
+- The outer post, when it has a `[data-testid="videoComponent"]` or `video` outside any quoted card. Id and author come from its time link.
+- The quoted post, when the quoted card contains a video. Id and author come from the card's `data-xt-post` tag. An untagged card (download script not run yet) is retried on the next tick. A nested quote inside a quote is not logged.
+
+So a text post quoting a video logs only the quoted post, and a video post quoting a video logs both. The Home mid-screen rule applies to the article; both posts in it are logged together.
 
 | Source | Test | Collect | Extras |
 | --- | --- | --- | --- |
 | Home | `/home` | The qualifying article crossing the vertical middle of the window | |
 | Bookmarks | `/i/history` | Every qualifying article | auto-scroll |
 | Likes | `/i/history/likes` | Every qualifying article | auto-scroll |
-| Profiles | `/<user>/media` | Qualifying articles whose author equals the user in the address bar | auto-scroll, `byUser` sections |
+| Profiles | `/<user>/media` | Qualifying posts from articles whose outer author equals the user in the address bar (quoted posts are logged under their own author's section) | auto-scroll, `byUser` sections |
 
 `/<user>` is any single path segment that is not a reserved X route (`home`, `i`, `explore`, `notifications`, `messages`, `settings`, `search`, `compose` and similar, kept in a named constant). A post opened at `/<user>/status/<id>` from one of these pages does not log.
 
@@ -93,7 +99,9 @@ Sources:
 - Image: same URL with `name=orig` (and the existing `format` kept). Extension from `format`.
 - Video: walk up the fiber from the video to the first `memoizedProps.source.variants`, take the `video/mp4` variant with the highest `bitrate`. GIFs use the same path.
 
-File name: `<user>_<id>[_<n>].<ext>`. User and id come from the post's time link. `n` is the photo number from the nearest `a[href*="/photo/N"]`, or the position among the article's media for videos in a mixed post. A post with one media item gets no suffix.
+Each scan also tags quoted cards (see Architecture) before placing buttons.
+
+File name: `<user>_<id>[_<n>].<ext>`. User and id come from the post that owns the media: the quoted card's tag when the media is inside a quoted card, otherwise the article's time link. `n` is the photo number from the nearest `a[href*="/photo/N"]`, or the position among the article's media for videos in a mixed post. A post with one media item gets no suffix.
 
 Saving: `fetch()` to a blob, then `<a download>` with an object URL. Button states as in Insta Tools: busy while fetching, green when saved with the resolution in the tooltip, red with the reason on failure (no variants found, fetch failed).
 
@@ -105,7 +113,7 @@ Saving: `fetch()` to a blob, then `<a download>` with an object URL. Button stat
 
 ## Testing
 
-- `tests/` folder with Playwright (Chromium, `--load-extension`) against mock pages served with `context.route`, mirroring the markup above: video detection, Home mid-screen rule, Profiles author filter, quoted posts ignored, image `name=orig` rewrite, best variant choice, file names, button placement and removal on recycle.
+- `tests/` folder with Playwright (Chromium, `--load-extension`) against mock pages served with `context.route`, mirroring the markup above: video detection, Home mid-screen rule, Profiles author filter, quoted posts (tagging, video only in quote, video in both, nested quote ignored, quoted media file names), image `name=orig` rewrite, best variant choice, file names, button placement and removal on recycle.
 - Live check on the four pages through Claude in Chrome by injecting both scripts, returning counts and booleans only. No download clicks without the user's go-ahead.
 - Not covered: other UI languages, the photo viewer modal at `/<user>/status/<id>/photo/N` (checked live if time allows).
 
